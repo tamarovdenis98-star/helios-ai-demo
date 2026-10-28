@@ -1,0 +1,11 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.key
+*credential*.json
+*secret*
+# local
+.claude/
+__pycache__/
+node_modules/
