@@ -1,0 +1,91 @@
+{
+  "name": "HELIOS 02 Распознать наряд (LLM)",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "r1",
+      "name": "Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: $json.model,\n  temperature: 0,\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: `Ты распознаёшь бумажный наряд-заказ зуботехнической лаборатории HELIOS по фото. Верни ТОЛЬКО JSON без пояснений, строго по схеме:\n{\n \"order_number\": {\"value\": \"строка из цифр\", \"confidence\": 0..1},\n \"date\": {\"value\": \"ДД.ММ.ГГГГ\", \"confidence\": 0..1},\n \"clinic\": {\"value\": \"\", \"confidence\": 0..1},\n \"doctor\": {\"value\": \"Фамилия И. О. врача\", \"confidence\": 0..1},\n \"patient_initials\": {\"value\": \"только инициалы, например П.И.С.\", \"confidence\": 0..1},\n \"teeth\": {\"value\": [номера зубов FDI числами], \"confidence\": 0..1},\n \"work_type\": {\"value\": \"одно из: Коронка цирконий | Коронка E.max | Металлокерамика | Винир | Мост | Вкладка | Другое\", \"confidence\": 0..1},\n \"units\": {\"value\": целое число, \"confidence\": 0..1},\n \"shade\": {\"value\": \"код VITA, например A2, B1, BL2, 2M2\", \"confidence\": 0..1},\n \"due_date\": {\"value\": \"ДД.ММ.ГГГГ\", \"confidence\": 0..1},\n \"comment\": {\"value\": \"\", \"confidence\": 0..1}\n}\nПравила:\n- ПАЦИЕНТ: никогда не возвращай фамилию, имя или отчество целиком — только первые буквы с точками (\"Петров И. С.\" → \"П.И.С.\"). Это требование 152-ФЗ.\n- Зубы: сверяй крестики в зубной формуле и строку \"Зубы через запятую\"; если они расходятся — снижай confidence.\n- Вид работы: отмеченный крестиком чекбокс.\n- confidence — твоя честная оценка, что значение прочитано верно. Если поле закрыто пятном, размыто или неразборчиво — value: null и confidence не выше 0.3. Не угадывай.\n- Ничего не выдумывай и не добавляй полей.` },\n    { role: 'user', content: [\n      { type: 'text', text: 'Распознай наряд на фото.' },\n      { type: 'image_url', image_url: { url: $json.dataUrl } }\n    ] }\n  ]\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "r2",
+      "name": "Recognize (LLM vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst raw = String(resp.choices?.[0]?.message?.content ?? '');\nlet fields;\ntry {\n  fields = JSON.parse(raw.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, ''));\n} catch (e) {\n  throw new Error('Модель вернула не JSON: ' + raw.slice(0, 200));\n}\nreturn [{ json: { fields, model: resp.model, usage: resp.usage || {} } }];"
+      },
+      "id": "r3",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Input": {
+      "main": [
+        [
+          {
+            "node": "Recognize (LLM vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recognize (LLM vision)": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow",
+    "errorWorkflow": "REPLACE_WORKFLOW_HELIOS_99_errors"
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "name": "HELIOS 99 Ошибки → Telegram",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "x1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_DATATABLE_helios_config"
+        },
+        "returnAll": true
+      },
+      "id": "x2",
+      "name": "Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = Object.fromEntries($('Config').all().map(i => [i.json.key, i.json.value]));\nconst e = $('Error Trigger').first().json;\n\n// В алерт не должны попасть ключи: маскируем вебхуки Битрикса, токены ботов и API-ключи\nconst mask = (s) => String(s ?? '')\n  .replace(/\\/rest\\/\\d+\\/[A-Za-z0-9]+/g, '/rest/***')\n  .replace(/\\d{6,}:[A-Za-z0-9_-]{30,}/g, '***')\n  .replace(/sk-[A-Za-z0-9_-]{20,}/g, 'sk-***');\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst exec = e.execution || {};\nconst err = exec.error || e.trigger?.error || {};\nconst text = [\n  '🚨 <b>HELIOS: ошибка автоматизации</b>',\n  `Workflow: ${esc(e.workflow?.name ?? '—')}`,\n  `Нода: ${esc(exec.lastNodeExecuted ?? err.node?.name ?? '—')}`,\n  `Ошибка: ${esc(mask(err.message || 'unknown').slice(0, 800))}`,\n  err.description ? `Детали: ${esc(mask(err.description).slice(0, 800))}` : null,\n  `Execution: ${esc(exec.url ?? (exec.id ? 'id ' + exec.id : '—'))}`,\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { chatId: cfg.manager_chat_id, text } }];"
+      },
+      "id": "x3",
+      "name": "Build Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "x4",
+      "name": "Send Alert",
+      "webhookId": "ccdce816-baeb-424c-badf-d8e5e5c1fce0",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        608,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Telegram account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow"
+  }
+}

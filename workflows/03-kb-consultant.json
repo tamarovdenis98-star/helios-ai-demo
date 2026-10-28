@@ -1,0 +1,632 @@
+{
+  "name": "HELIOS 03 ИИ-консультант (база знаний → менеджер)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "k1",
+      "name": "Telegram Trigger",
+      "webhookId": "c2a7e9d4-3b18-4f6e-a0c5-8e1d7b2f9a63",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        304
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Единственная нода, которая знает про Telegram. Для WhatsApp/Max заменяются триггер,\n// эта нода и нода ответа — всё остальное работает с полями ниже.\nconst msg = $('Telegram Trigger').first().json.message || {};\nconst from = msg.from || {};\nlet text = (msg.text || '').trim();\nif (msg.contact) text = `Мой телефон: ${msg.contact.phone_number}`;\nif (/^\\/start/.test(text)) text = 'Здравствуйте! Расскажите, какие есть курсы?';\nreturn [{\n  json: {\n    channel: 'telegram',\n    chatId: String(msg.chat?.id ?? ''),\n    userName: [from.first_name, from.last_name].filter(Boolean).join(' '),\n    userHandle: from.username ? '@' + from.username : '',\n    text: text || '(пустое сообщение)',\n  },\n}];"
+      },
+      "id": "k2",
+      "name": "Normalize (канал → общий формат)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_DATATABLE_helios_config"
+        },
+        "returnAll": true
+      },
+      "id": "k3",
+      "name": "Config",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "position": [
+        400,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_DATATABLE_helios_courses"
+        },
+        "returnAll": true
+      },
+      "id": "k4",
+      "name": "Knowledge Base",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "position": [
+        608,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = Object.fromEntries($('Config').all().map(i => [i.json.key, i.json.value]));\nconst n = $('Normalize (канал → общий формат)').first().json;\nconst courses = $('Knowledge Base').all().map(i => i.json);\n\n// База небольшая (десятки курсов) — кладём её в промпт целиком, без векторного поиска\nconst kb = courses.map(c => [\n  `[${c.course_id}] ${c.title}`,\n  `  Для кого: ${c.audience}; город: ${c.city}; даты: ${c.dates}; формат: ${c.format}`,\n  `  Стоимость: ${Number(c.price_rub).toLocaleString('ru-RU')} ₽; мест: ${c.seats}; лектор: ${c.lecturer}`,\n  `  Программа: ${c.program}`,\n].join('\\n')).join('\\n\\n');\n\nconst policies = `Оплата: по счёту для клиник или онлайн по ссылке от менеджера. Бронь места — 3 рабочих дня после заявки.\nСкидка 10 % при записи двух и более сотрудников одной клиники на один курс; другие скидки — только через менеджера.\nДокументы: сертификат учебного центра HELIOS. Баллы НМО бот не обещает — уточняет менеджер.\nОтмена: возврат 100 % не позднее чем за 7 дней до начала; позже — перенос на другой поток.\nАдреса: Сочи, ул. Навагинская; Москва — площадка партнёра. Точный адрес и проезд сообщает менеджер.`;\n\nconst system = `Ты — ИИ-консультант учебного центра HELIOS (зуботехническая лаборатория и обучение для стоматологов и зубных техников, Сочи/Москва).\n\nПРАВИЛА (нарушать нельзя):\n1. Отвечай ТОЛЬКО по БАЗЕ ЗНАНИЙ и УСЛОВИЯМ ниже. Не выдумывай курсы, цены, даты, лекторов, скидки, адреса, баллы НМО.\n2. Не давай медицинских рекомендаций и не называй цены на лечение (имплантация, протезирование, виниры для пациента и т. п.) — учебный центр этим не занимается.\n3. Если ответа нет в базе — честно скажи, что таких данных у тебя нет, и предложи подключить менеджера.\n4. Веди к записи: помоги выбрать курс, затем спроси имя и телефон. Платёжные данные не запрашивай — счёт и ссылку на оплату отправляет менеджер.\n5. Стиль: коллегиальный и профессиональный, как между стоматологами; на «Вы»; кратко (до 6 строк); без восклицаний и лишних эмодзи.\n\nПЕРЕДАЧА МЕНЕДЖЕРУ (handoff.needed = true) — ровно один раз, когда:\n- клиент хочет записаться/оплатить И уже назвал имя и телефон (reason \"запись\"); если телефона нет — сначала попроси его;\n- вопрос вне базы и клиент согласен на менеджера или просит человека (reason \"вопрос вне базы\").\nВ остальных случаях handoff.needed = false. После передачи скажи, что менеджер свяжется в рабочее время.\n\nФОРМАТ ОТВЕТА — всегда один JSON-объект без текста вокруг:\n{\"reply\": \"текст клиенту\", \"handoff\": {\"needed\": false, \"reason\": \"\", \"name\": \"\", \"phone\": \"\", \"course\": \"\", \"summary\": \"1–2 предложения: что хочет клиент\"}}\n\nБАЗА ЗНАНИЙ — КУРСЫ:\n${kb}\n\nУСЛОВИЯ:\n${policies}\n\nСегодня: ${$now.setZone('Europe/Moscow').toFormat('dd.MM.yyyy')}. Клиент в мессенджере: ${n.userName || 'без имени'} ${n.userHandle}.`;\n\nreturn [{ json: { ...n, system, sessionId: `${n.channel}:${n.chatId}`, model: cfg.kb_model } }];"
+      },
+      "id": "k5",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "needsFallback": true,
+        "options": {
+          "systemMessage": "={{ $json.system }}"
+        }
+      },
+      "id": "k6",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1024,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $('Build Prompt').first().json.model }}",
+        "options": {
+          "responseFormat": "json_object",
+          "temperature": 0.2
+        }
+      },
+      "id": "k7",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        944,
+        528
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Build Prompt').first().json.sessionId }}",
+        "contextWindowLength": 12
+      },
+      "id": "k8",
+      "name": "Dialog Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        1104,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = String($input.first().json.output ?? '').replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n\n// Модель иногда ломает JSON (лишняя «}», текст вокруг). Клиент не должен увидеть JSON никогда.\nconst tryParse = (s) => { try { return JSON.parse(s); } catch (e) { return null; } };\nlet data = null;\nconst start = out.indexOf('{');\nif (start >= 0) {\n  let s = out.slice(start);\n  for (let i = 0; i < 6 && !data; i++) {\n    data = tryParse(s);\n    if (!data) s = s.replace(/[\\s\\S]$/, '');            // срезаем хвост по символу\n  }\n  if (!data) {\n    const end = out.lastIndexOf('}');\n    for (let e = end; e > start && !data; e = out.lastIndexOf('}', e - 1)) data = tryParse(out.slice(start, e + 1));\n  }\n}\nif (!data) {\n  // последний шанс: достаём reply регуляркой, иначе отдаём текст как есть (если это не JSON)\n  const m = out.match(/\"reply\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"/);\n  data = { reply: m ? tryParse('\"' + m[1] + '\"') : (start === 0 ? '' : out), handoff: { needed: false } };\n}\n\nconst h = data.handoff || {};\nreturn [{\n  json: {\n    reply: String(data.reply || 'Извините, не расслышал вопрос. Переформулируйте, пожалуйста.'),\n    handoff: {\n      needed: h.needed === true,\n      reason: String(h.reason || ''),\n      name: String(h.name || ''),\n      phone: String(h.phone || '').replace(/[^\\d+]/g, ''),\n      course: String(h.course || ''),\n      summary: String(h.summary || ''),\n    },\n  },\n}];"
+      },
+      "id": "k9",
+      "name": "Parse Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Build Prompt').first().json.chatId }}",
+        "text": "={{ String($json.reply).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "k10",
+      "name": "Reply (Telegram)",
+      "webhookId": "2edb2de5-61ad-4e6e-9603-a1bd2bb918fe",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        304
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Parse Answer').first().json.handoff.needed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "k11",
+      "name": "Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = Object.fromEntries($('Config').all().map(i => [i.json.key, i.json.value]));\nconst b = $('Build Prompt').first().json;\nconst h = $('Parse Answer').first().json.handoff;\n// Менеджеру нужно название курса, а не код: «C01» → «C01 — Цифровое моделирование…»\nconst code = (String(h.course || '').match(/C\\d{2}/i) || [])[0];\nconst c = code && $('Knowledge Base').all().map(i => i.json).find(x => x.course_id === code.toUpperCase());\nif (c) h.course = `${c.course_id} — ${c.title} (${c.city}, ${c.dates})`;\nreturn [{\n  json: {\n    target: cfg.lead_target === 'bitrix' && cfg.bitrix_webhook ? 'bitrix' : 'sheets',\n    bx: cfg.bitrix_webhook ? (cfg.bitrix_webhook.endsWith('/') ? cfg.bitrix_webhook : cfg.bitrix_webhook + '/') : '',\n    sheetId: cfg.sheet_id,\n    managerChatId: cfg.manager_chat_id,\n    name: h.name || b.userName || 'Клиент из Telegram',\n    phone: h.phone,\n    course: h.course,\n    reason: h.reason || 'запись',\n    summary: h.summary,\n    channel: b.channel,\n    chatId: b.chatId,\n    handle: b.userHandle,\n    at: $now.setZone('Europe/Moscow').toFormat('dd.MM.yyyy HH:mm'),\n  },\n}];"
+      },
+      "id": "k12",
+      "name": "Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.target === 'bitrix' ? 0 : 1 }}"
+      },
+      "id": "k13",
+      "name": "Lead Target",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2208,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.bx }}crm.lead.add",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: {\n  TITLE: ($json.reason === 'запись' ? 'Запись на курс: ' : 'Вопрос из бота: ') + ($json.course || 'без курса'),\n  NAME: $json.name,\n  PHONE: $json.phone ? [{ VALUE: $json.phone, VALUE_TYPE: 'WORK' }] : undefined,\n  SOURCE_ID: 'OTHER',\n  SOURCE_DESCRIPTION: 'telegram_bot',\n  UTM_SOURCE: 'telegram_bot',\n  COMMENTS: `Курс: ${$json.course || '—'}\\nПричина: ${$json.reason}\\nРезюме диалога: ${$json.summary}\\nКанал: ${$json.channel} ${$json.handle} (chat_id ${$json.chatId})`,\n} }) }}",
+        "options": {}
+      },
+      "id": "k14",
+      "name": "Bitrix crm.lead.add",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        2432,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.sheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Лиды"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Дата": "={{ $json.at }}",
+            "Имя": "={{ $json.name }}",
+            "Телефон": "={{ $json.phone }}",
+            "Курс": "={{ $json.course }}",
+            "Причина": "={{ $json.reason }}",
+            "Резюме": "={{ $json.summary }}",
+            "Источник": "telegram_bot",
+            "Контакт в канале": "={{ ($json.handle || '') + ' chat_id ' + $json.chatId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Дата",
+              "displayName": "Дата",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Имя",
+              "displayName": "Имя",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Телефон",
+              "displayName": "Телефон",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Курс",
+              "displayName": "Курс",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Причина",
+              "displayName": "Причина",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Резюме",
+              "displayName": "Резюме",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Источник",
+              "displayName": "Источник",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Контакт в канале",
+              "displayName": "Контакт в канале",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "k15",
+      "name": "Sheets «Лиды»",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        2432,
+        304
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Lead Data').first().json.managerChatId }}",
+        "text": "={{ (() => { const l = $('Lead Data').first().json; const e = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); const where = l.target === 'bitrix' ? ('Bitrix24, лид №' + ($json.result ?? '?')) : 'Google Таблица, лист «Лиды»'; return ['🔔 <b>Диалог передан менеджеру</b> (' + e(l.reason) + ')', 'Имя: ' + e(l.name), 'Телефон: ' + e(l.phone || '—'), 'Курс: ' + e(l.course || '—'), 'Резюме: ' + e(l.summary || '—'), 'Канал: ' + e(l.channel + ' ' + l.handle), 'Записано: ' + e(where)].join('\\n'); })() }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "k16",
+      "name": "Notify Manager",
+      "webhookId": "fb7468cf-b3ad-43f7-bacc-da75105fb363",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        208
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "Telegram account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "k17",
+      "name": "Fallback Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        640
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_CREDENTIAL_ID",
+          "name": "OpenRouter account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize (канал → общий формат)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize (канал → общий формат)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Base": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dialog Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Answer": {
+      "main": [
+        [
+          {
+            "node": "Reply (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply (Telegram)": {
+      "main": [
+        [
+          {
+            "node": "Handoff?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handoff?": {
+      "main": [
+        [
+          {
+            "node": "Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Lead Target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Target": {
+      "main": [
+        [
+          {
+            "node": "Bitrix crm.lead.add",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sheets «Лиды»",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bitrix crm.lead.add": {
+      "main": [
+        [
+          {
+            "node": "Notify Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets «Лиды»": {
+      "main": [
+        [
+          {
+            "node": "Notify Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Europe/Moscow",
+    "errorWorkflow": "REPLACE_WORKFLOW_HELIOS_99_errors"
+  }
+}
