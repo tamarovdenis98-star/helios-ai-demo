@@ -136,11 +136,12 @@ def fill(order, bad=False):
         img = img.filter(ImageFilter.GaussianBlur(2.4))
 
     # фото, а не скан: поворот, фон стола, лёгкая неравномерность
-    angle = random.uniform(-6, -3) if bad else random.uniform(-2, 2)
+    angle = order.get("angle", random.uniform(-6, -3) if bad else random.uniform(-2, 2))
     img = img.rotate(angle, expand=True, fillcolor=(120, 110, 95))
     bg = Image.new("RGB", (img.width + 120, img.height + 120), (120, 110, 95))
     bg.paste(img, (60, 60))
-    shade = Image.linear_gradient("L").resize(bg.size).point(lambda v: int(v * (0.45 if bad else 0.18)))
+    darkness = order.get("shadow", 0.45 if bad else 0.18)
+    shade = Image.linear_gradient("L").resize(bg.size).point(lambda v: int(v * darkness))
     bg = Image.composite(Image.new("RGB", bg.size, (0, 0, 0)), bg, shade)
     return bg.resize((bg.width * 2 // 3, bg.height * 2 // 3))
 
@@ -173,6 +174,35 @@ ORDERS = [
 ]
 
 
+# Наряды для показа на собеседовании: у каждого свой нюанс (см. DEMO.md)
+DEMO_ORDERS = [
+    {   # чистый бланк — базовый сценарий
+        "file": "demo-2501-ok-emax.jpg", "number": "2501", "date": "28.10.2026",
+        "clinic": "Белый клык", "doctor": "Орлова Е. С.", "patient": "К. М.",
+        "teeth": [11, 21], "work": "Коронка E.max", "units": "2", "shade": "A1",
+        "due": "04.11.2026", "comment": "Фото цвета приложено к заказу",
+    },
+    {   # полное ФИО пациента — в таблицу должны попасть только инициалы
+        "file": "demo-2502-full-name.jpg", "number": "2502", "date": "28.10.2026",
+        "clinic": "Дентал Сити", "doctor": "Иванов П. Д.", "patient": "Смирнова Елена Андреевна",
+        "teeth": [46], "work": "Коронка цирконий", "units": "1", "shade": "A3",
+        "due": "06.11.2026", "comment": "Слепок цифровой, файл в почте",
+    },
+    {   # 3 зуба отмечено, а количество 2 — ловит проверка «кол-во = числу зубов»
+        "file": "demo-2503-units-mismatch.jpg", "number": "2503", "date": "28.10.2026",
+        "clinic": "Улыбка", "doctor": "Соколова А. В.", "patient": "Д. В.",
+        "teeth": [24, 25, 26], "work": "Мост", "units": "2", "shade": "A3",
+        "due": "10.11.2026", "comment": "Промежуточная часть 25",
+    },
+    {   # кривое фото с тенью + цвет A5, которого нет в шкале VITA
+        "file": "demo-2504-bad-shade-tilted.jpg", "number": "2504", "date": "28.10.2026",
+        "clinic": "Стоматология на Морской", "doctor": "Гаспарян Л. М.", "patient": "Н. П.",
+        "teeth": [13, 12, 11, 21, 22, 23], "work": "Винир", "units": "6", "shade": "A5",
+        "due": "12.11.2026", "comment": "Мок-ап согласован", "angle": -8, "shadow": 0.4,
+    },
+]
+
+
 def work_photo():
     """Условное «фото готовой работы» для сценария 2."""
     img = Image.new("RGB", (900, 700), (40, 44, 52))
@@ -193,6 +223,10 @@ def main():
     for o in ORDERS:
         fill(o, o.get("bad", False)).save(OUT / o["file"], quality=85 if not o.get("bad") else 55)
     work_photo().save(OUT / "work-photo-2481.jpg", quality=85)
+    demo = OUT / "demo"
+    demo.mkdir(exist_ok=True)
+    for o in DEMO_ORDERS:
+        fill(o).save(demo / o["file"], quality=85)
     print("saved to", OUT)
 
 
