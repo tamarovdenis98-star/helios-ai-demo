@@ -8,8 +8,8 @@ import argparse
 import base64
 import json
 import re
+import subprocess
 import time
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,8 +43,9 @@ TRUTH = {
 # Цена OpenRouter, $ за 1M токенов (вход, выход) — для оценки стоимости наряда
 PRICES = {
     "deepseek/deepseek-v4-flash-vision-exp": (0.2156, 0.6468),
+    "deepseek/deepseek-v4.1-flash": (0.14, 0.42),
     "anthropic/claude-haiku-4.5": (1.0, 5.0),
-    "google/gemma-4-31b-it:free": (0.0, 0.0),
+    # бесплатные модели (:free) — цена 0
 }
 
 
@@ -70,18 +71,24 @@ def call(url, model, path):
         "model": model,
         "mime": "image/jpeg",
         "image_b64": base64.b64encode(path.read_bytes()).decode(),
-    }).encode()
-    req = urllib.request.Request(url, body, {"Content-Type": "application/json"})
+    })
+    # curl вместо urllib: у Python на Windows бывает устаревшее хранилище корневых сертификатов
     t = time.time()
-    with urllib.request.urlopen(req, timeout=180) as r:
-        res = json.loads(r.read())
+    out = subprocess.run(
+        ["curl", "-s", "-m", "180", "-X", "POST", url, "-H", "Content-Type: application/json", "--data-binary", "@-"],
+        input=body, capture_output=True, text=True, encoding="utf-8",
+    ).stdout
+    try:
+        res = json.loads(out)
+    except json.JSONDecodeError:
+        res = {"error": out[:300]}
     return (res[0] if isinstance(res, list) else res), time.time() - t
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
-    ap.add_argument("--models", default="deepseek/deepseek-v4-flash-vision-exp")
+    ap.add_argument("--models", default="google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free,thinkingmachines/inkling:free")
     args = ap.parse_args()
     OUT.mkdir(exist_ok=True)
 

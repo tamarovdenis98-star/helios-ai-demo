@@ -9,3 +9,8 @@
 .claude/
 __pycache__/
 node_modules/
+
+# raw n8n exports (before sanitize)
+workflows/raw/
+eval/raw-*.json
+/image-*.jpg
